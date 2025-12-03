@@ -9,8 +9,21 @@ const DEGREE_TO_RADIAN_CONSTANT: f64 = std::f64::consts::PI / 180_f64;
 const RADIAN_TO_DEGREE_CONSTANT: f64 = 180_f64 / std::f64::consts::PI;
 const FRAC_PI_DEGREE: f64x8 = f64x8::new([180f64; 8]);
 
-// TODO C support of ltargcm
-//pub fn latlon_to_azimnth_isometric_csupport() {}
+#[repr(C)]
+pub struct LatlonToAzimnthIsometricCsupport {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn latlon_to_azimnth_isometric_csupport(
+    latitude_delta: f64,
+    longitude_delta: f64,
+) -> LatlonToAzimnthIsometricCsupport {
+    let (x, y): (f64, f64) = latlon_to_azimnth_isometric(latitude_delta, longitude_delta);
+    LatlonToAzimnthIsometricCsupport { x, y }
+}
+
 pub fn latlon_to_azimnth_isometric(latitude_delta: f64, longitude_delta: f64) -> (f64, f64) {
     let square = |x: f64| x * x;
     let degree_to_radian = |degree: f64| degree * DEGREE_TO_RADIAN_CONSTANT;
@@ -38,8 +51,68 @@ pub fn latlon_to_azimnth_isometric(latitude_delta: f64, longitude_delta: f64) ->
     )
 }
 
-// TODO used wide to accelerate multipoint,line,polygon
-//pub fn latlon_to_azimnth_isometric_simd_csupport() {}
+#[repr(C)]
+pub struct LatlonToAzimnthIsometricSimdCsupport {
+    pub a_ptr: *const f64,
+    pub a_len: usize,
+    pub b_ptr: *const f64,
+    pub b_len: usize,
+}
+
+impl LatlonToAzimnthIsometricSimdCsupport {
+    pub fn new((a, b): (Vec<f64>, Vec<f64>)) -> Self {
+        let mut result: LatlonToAzimnthIsometricSimdCsupport =
+            LatlonToAzimnthIsometricSimdCsupport {
+                a_ptr: std::ptr::null(),
+                a_len: 0usize,
+                b_ptr: std::ptr::null(),
+                b_len: 0usize,
+            };
+        result.set_a(a);
+        result.set_b(b);
+        result
+    }
+
+    pub fn get(&self) -> (Vec<f64>, Vec<f64>) {
+        (self.get_a(), self.get_b())
+    }
+
+    pub fn get_a(&self) -> Vec<f64> {
+        unsafe {
+            let slice = std::slice::from_raw_parts(self.a_ptr, self.a_len);
+            slice.to_vec()
+        }
+    }
+
+    pub fn set_a(&mut self, data: Vec<f64>) {
+        let data_memory = ManuallyDrop::new(data);
+        self.a_ptr = data_memory.as_ptr();
+        self.a_len = data_memory.len();
+    }
+
+    pub fn get_b(&self) -> Vec<f64> {
+        unsafe {
+            let slice = std::slice::from_raw_parts(self.b_ptr, self.b_len);
+            slice.to_vec()
+        }
+    }
+
+    pub fn set_b(&mut self, data: Vec<f64>) {
+        let data_memory = ManuallyDrop::new(data);
+        self.b_ptr = data_memory.as_ptr();
+        self.b_len = data_memory.len();
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn latlon_to_azimnth_isometric_simd_csupport(
+    parameter: LatlonToAzimnthIsometricSimdCsupport,
+) -> LatlonToAzimnthIsometricSimdCsupport {
+    LatlonToAzimnthIsometricSimdCsupport::new(latlon_to_azimnth_isometric_simd(
+        parameter.get_a(),
+        parameter.get_b(),
+    ))
+}
 
 pub fn latlon_to_azimnth_isometric_simd(
     latitude_delta_vec: Vec<f64>,
@@ -110,6 +183,7 @@ pub fn latlon_to_azimnth_isometric_simd(
     (xs, ys)
 }
 
+#[repr(C)]
 pub struct ReturnContent {
     pub status: bool,
     pub ptr: *const u8,
@@ -127,6 +201,7 @@ impl ReturnContent {
     }
 }
 
+#[repr(C)]
 pub struct GenerateParameters {
     pub color_point: u8,
     pub color_multipoint: u8,
@@ -139,19 +214,27 @@ pub struct GenerateParameters {
     pub fineness: u8,
 }
 
-pub fn shapefile_generate(
+// TODO
+#[unsafe(no_mangle)]
+pub fn shapefile_generate_csupport(
     buffer_ptr: *const u8,
     buffer_len: usize,
-    para: GenerateParameters,
+    parameter: GenerateParameters,
 ) -> ReturnContent {
-    let buffer = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
+    shapefile_generate(
+        unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) },
+        parameter,
+    )
+}
+
+pub fn shapefile_generate(buffer: &[u8], parameter: GenerateParameters) -> ReturnContent {
     let cursor = Cursor::new(buffer);
     let mut reader = match ShapeReader::new(cursor) {
         Ok(data) => data,
         Err(e) => return ReturnContent::new(e.to_string().into_bytes(), false),
     };
     // TODO Draw the picture used par_iter
-    //    reader.for_each(|shape| )
+    //reader.for_each(|shape| )
     ReturnContent::new(Vec::new(), true)
 }
 
@@ -217,7 +300,7 @@ mod tests {
         let end_ltai = start.elapsed();
 
         // TODO add test for ltais
-        //        latlon_to_azimnth_isometric_simd()
+        //latlon_to_azimnth_isometric_simd()
 
         result.compare();
 
