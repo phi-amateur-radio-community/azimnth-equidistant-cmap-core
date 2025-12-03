@@ -201,17 +201,23 @@ mod tests {
         let start = Instant::now();
         let standard = start.elapsed();
 
-        result.add_tuple_2((0_f64, 0_f64), latlon_to_azimnth_isometric(0_f64, 0_f64));
         result.add_tuple_2(
-            (0_f64, -90_f64),
-            latlon_to_azimnth_isometric(-90_f64, 0_f64),
+            (0000_f64, 0000_f64),
+            latlon_to_azimnth_isometric(000_f64, 0000_f64),
         );
         result.add_tuple_2(
-            (0_f64, 135_f64),
-            latlon_to_azimnth_isometric(45_f64, 180_f64),
+            (0000_f64, -090_f64),
+            latlon_to_azimnth_isometric(-90_f64, 0000_f64),
+        );
+        result.add_tuple_2(
+            (0000_f64, 0135_f64),
+            latlon_to_azimnth_isometric(045_f64, 0180_f64),
         );
 
         let end_ltai = start.elapsed();
+
+        // TODO add test for ltais
+        //        latlon_to_azimnth_isometric_simd()
 
         result.compare();
 
