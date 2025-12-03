@@ -18,16 +18,8 @@ pub fn latlon_to_azimnth_isometric(latitude_delta: f64, longitude_delta: f64) ->
     let latitude_delta_radian: f64 = degree_to_radian(latitude_delta);
     let longitude_delta_radian: f64 = degree_to_radian(longitude_delta);
     let hemispheres_anterior_or_posterior: bool = longitude_delta.abs() < 90_f64;
-
-    #[cfg(test)]
-    dbg!(latitude_delta_radian, longitude_delta_radian);
-
     let latitude_delta_radian_sine: f64 = latitude_delta_radian.sin();
     let longitude_delta_radian_sine: f64 = longitude_delta_radian.sin();
-
-    #[cfg(test)]
-    dbg!(latitude_delta_radian_sine, longitude_delta_radian_sine);
-
     let distance: f64 =
         (square(latitude_delta_radian_sine) + square(longitude_delta_radian_sine)).sqrt();
     let k: f64 = match distance {
@@ -40,10 +32,6 @@ pub fn latlon_to_azimnth_isometric(latitude_delta: f64, longitude_delta: f64) ->
             }) / distance
         }
     };
-
-    #[cfg(test)]
-    dbg!(distance, k);
-
     (
         longitude_delta_radian_sine * k,
         latitude_delta_radian_sine * k,
@@ -139,18 +127,22 @@ impl ReturnContent {
     }
 }
 
-pub struct ColorData {
+pub struct GenerateParameters {
     pub color_point: u8,
     pub color_multipoint: u8,
     pub color_line: u8,
-    pub color_polygon_line: u8,
-    pub color_polygon_fill: u8,
+    pub color_polygon: u8,
+    pub width_point: u8,
+    pub width_multipoint: u8,
+    pub width_line: u8,
+    pub width_polygon: u8,
+    pub fineness: u8,
 }
 
 pub fn shapefile_generate(
     buffer_ptr: *const u8,
     buffer_len: usize,
-    color: ColorData,
+    para: GenerateParameters,
 ) -> ReturnContent {
     let buffer = unsafe { std::slice::from_raw_parts(buffer_ptr, buffer_len) };
     let cursor = Cursor::new(buffer);
@@ -169,16 +161,60 @@ pub fn shapefile_generate(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::AbsDiffEq;
+    use approx::assert_abs_diff_eq;
+    use std::time::Instant;
+
+    struct ResultBody<T: AbsDiffEq> {
+        totals: Vec<T>,
+        results: Vec<T>,
+        epsilon: f64,
+    }
+
+    impl<T: AbsDiffEq<Epsilon = f64> + std::fmt::Debug> ResultBody<T> {
+        fn new(epsilon: f64) -> Self {
+            ResultBody {
+                totals: Vec::new(),
+                results: Vec::new(),
+                epsilon,
+            }
+        }
+        fn add_tuple_2(&mut self, (total_a, total_b): (T, T), (result_a, result_b): (T, T)) {
+            self.totals.push(total_a);
+            self.totals.push(total_b);
+            self.results.push(result_a);
+            self.results.push(result_b);
+        }
+        fn compare(&self) {
+            assert_abs_diff_eq!(
+                self.totals.as_slice(),
+                self.results.as_slice(),
+                epsilon = self.epsilon
+            );
+            println!("Compared");
+        }
+    }
 
     #[test]
     fn transprojection() {
-        let result = latlon_to_azimnth_isometric(0_f64, 0_f64);
-        assert_eq!(result, (0_f64, 0_f64));
+        let mut result = ResultBody::<f64>::new(1e-12_f64);
+        let start = Instant::now();
+        let standard = start.elapsed();
 
-        let result = latlon_to_azimnth_isometric(-90_f64, 0_f64);
-        assert_eq!(result, (0_f64, -90_f64));
+        result.add_tuple_2((0_f64, 0_f64), latlon_to_azimnth_isometric(0_f64, 0_f64));
+        result.add_tuple_2(
+            (0_f64, -90_f64),
+            latlon_to_azimnth_isometric(-90_f64, 0_f64),
+        );
+        result.add_tuple_2(
+            (0_f64, 135_f64),
+            latlon_to_azimnth_isometric(45_f64, 180_f64),
+        );
 
-        let result = latlon_to_azimnth_isometric(0_f64, 180_f64);
-        assert_eq!(result, (180_f64, 0_f64));
+        let end_ltai = start.elapsed();
+
+        result.compare();
+
+        println!("standard: {:?}\nltai: {:?}", standard, end_ltai);
     }
 }
