@@ -126,72 +126,57 @@ pub fn latlon_to_azimnth_isometric_simd(
     longitude_delta_vec: Vec<f64>,
 ) -> (Vec<f64>, Vec<f64>) {
     let len = std::cmp::min(latitude_delta_vec.len(), longitude_delta_vec.len());
-    let latitude_delta_vec_chunks = latitude_delta_vec[..len].par_chunks(4096);
-    let longitude_delta_vec_chunks = longitude_delta_vec[..len].par_chunks(4096);
-    let chunks_bodys: Vec<(Vec<f64>, Vec<f64>)> = latitude_delta_vec_chunks
+    let latitude_delta_vec_chunks = latitude_delta_vec[..len].par_chunks_exact(4096);
+    let longitude_delta_vec_chunks = longitude_delta_vec[..len].par_chunks_exact(4096);
+    let chunks_remainder = latitude_delta_vec_chunks
+        .remainder()
+        .iter()
+        .copied()
+        .zip(longitude_delta_vec_chunks.remainder().iter().copied());
+    let chunks_bodys: Vec<([f64; 4096], [f64; 4096])> = latitude_delta_vec_chunks
         .zip(longitude_delta_vec_chunks)
         .map(
-            |(latitude_slice, longitude_slice): (&[f64], &[f64])| -> (Vec<f64>, Vec<f64>) {
-                let latitude_arraies = latitude_slice.chunks_exact(8);
-                let longitude_arraies = longitude_slice.chunks_exact(8);
-                let remainder = latitude_arraies
-                    .remainder()
-                    .iter()
-                    .copied()
-                    .zip(longitude_arraies.remainder().iter().copied());
+            |(latitude_slice, longitude_slice): (&[f64], &[f64])| -> ([f64; 4096], [f64; 4096]) {
+                let mut latitude_arraies = latitude_slice.chunks_exact(8);
+                let mut longitude_arraies = longitude_slice.chunks_exact(8);
 
-                let mut xs = Vec::<f64>::new();
-                let mut ys = Vec::<f64>::new();
+                let mut xs: [f64; 4096] = [0_f64; 4096];
+                let mut ys: [f64; 4096] = [0_f64; 4096];
 
-                for (latitude_array, longitude_array) in latitude_arraies.zip(longitude_arraies) {
+                for (x, y) in xs.chunks_mut(8).zip(ys.chunks_mut(8)) {
+                    let latitude_array = match latitude_arraies.next() {
+                        Some(s) => s,
+                        None => return (xs, ys),
+                    };
+                    let longitude_array = match longitude_arraies.next() {
+                        Some(s) => s,
+                        None => return (xs, ys),
+                    };
+
                     #[cfg(test)]
                     let start = std::time::Instant::now();
-
-                    #[cfg(test)]
-                    dbg!(latitude_array, longitude_array);
 
                     let square = |x: f64x8| x * x;
 
                     let latitude = f64x8::from(latitude_array);
                     let longitude = f64x8::from(longitude_array);
 
-                    #[cfg(test)]
-                    dbg!(latitude, longitude);
-
                     let posistion = longitude.abs().simd_lt(f64x8::FRAC_PI_2);
-
-                    #[cfg(test)]
-                    dbg!(posistion);
 
                     let latitude_radian = latitude.to_radians();
                     let longitude_radian = longitude.to_radians();
 
-                    #[cfg(test)]
-                    dbg!(latitude_radian, longitude_radian);
-
                     let latitude_radian_sine = latitude_radian.sin();
                     let longitude_radian_sine = longitude_radian.sin();
-
-                    #[cfg(test)]
-                    dbg!(latitude_radian_sine, longitude_radian_sine);
 
                     let distance =
                         (square(latitude_radian_sine) + square(longitude_radian_sine)).sqrt();
 
-                    #[cfg(test)]
-                    dbg!(distance);
-
                     let distance_arcsine = distance.asin().to_degrees();
                     let distance_arcsine_back = FRAC_PI_DEGREE - distance_arcsine;
 
-                    #[cfg(test)]
-                    dbg!(distance_arcsine, distance_arcsine_back);
-
                     let k_uncheck =
                         posistion.blend(distance_arcsine, distance_arcsine_back) / distance;
-
-                    #[cfg(test)]
-                    dbg!(posistion.blend(distance_arcsine, distance_arcsine_back));
 
                     let k_infinite_mask = k_uncheck.is_inf();
                     let k_nan_mask = k_uncheck.is_nan();
@@ -200,20 +185,11 @@ pub fn latlon_to_azimnth_isometric_simd(
 
                     let k = k_bad.blend(f64x8::ZERO, k_uncheck);
 
-                    #[cfg(test)]
-                    dbg!(k);
-
-                    xs.extend((longitude_radian_sine * k).to_array());
-                    ys.extend((latitude_radian_sine * k).to_array());
+                    x.copy_from_slice((longitude_radian_sine * k).as_array());
+                    y.copy_from_slice((latitude_radian_sine * k).as_array());
 
                     #[cfg(test)]
                     dbg!(start.elapsed());
-                }
-
-                for (latitude, longitude) in remainder {
-                    let (x, y) = latlon_to_azimnth_isometric(latitude, longitude);
-                    xs.push(x);
-                    ys.push(y);
                 }
 
                 (xs, ys)
@@ -227,6 +203,12 @@ pub fn latlon_to_azimnth_isometric_simd(
     for (x, y) in chunks_bodys {
         xs.extend(x);
         ys.extend(y);
+    }
+
+    for (latitude, longitude) in chunks_remainder {
+        let result = latlon_to_azimnth_isometric(latitude, longitude);
+        xs.push(result.0);
+        ys.push(result.1);
     }
 
     (xs, ys)
