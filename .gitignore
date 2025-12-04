@@ -27,3 +27,6 @@ target
 
 # Test map
 /shapefile
+
+# Test out
+/out

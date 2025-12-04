@@ -1,4 +1,9 @@
+use image::codecs::png::PngEncoder;
+use image::{ColorType, ImageEncoder};
+use imageproc::drawing::{draw_filled_circle_mut, draw_line_segment_mut, draw_polygon_mut};
+use imageproc::image::{Rgba, RgbaImage};
 use rayon::prelude::*;
+use shapefile::record::traits::HasXY;
 use shapefile::{Shape, ShapeReader};
 use std::io::Cursor;
 use std::mem::ManuallyDrop;
@@ -9,7 +14,7 @@ const DEGREE_TO_RADIAN_CONSTANT: f64 = std::f64::consts::PI / 180_f64;
 const RADIAN_TO_DEGREE_CONSTANT: f64 = 180_f64 / std::f64::consts::PI;
 const FRAC_PI_DEGREE: f64x8 = f64x8::new([180f64; 8]);
 
-#[unsafe(no_mangle)]
+#[warn(no_mangle_generic_items)]
 pub extern "C" fn free<T>(ptr: *const T, len: usize) {
     unsafe {
         let _ = Box::from_raw(std::slice::from_raw_parts_mut(ptr as *mut T, len));
@@ -241,15 +246,16 @@ impl ReturnContent {
 
 #[repr(C)]
 pub struct GenerateParameters {
-    pub color_point: u8,
-    pub color_multipoint: u8,
-    pub color_line: u8,
-    pub color_polygon: u8,
-    pub width_point: u8,
-    pub width_multipoint: u8,
-    pub width_line: u8,
-    pub width_polygon: u8,
+    pub color_point: u32,
+    pub color_multipoint: u32,
+    pub color_line: u32,
+    pub color_polygon: u32,
+    pub width_point: i32,
+    pub width_multipoint: i32,
+    pub width_line: i32,
+    // TODO add jump point
     pub fineness: u8,
+    pub radius: u32,
 }
 
 #[unsafe(no_mangle)]
@@ -273,19 +279,82 @@ pub fn shapefile_generate(
         Ok(data) => data,
         Err(e) => return Err(e),
     };
-    // TODO Draw the picture used par_iter
-    //reader.for_each(|shape| )
-    ReturnContent::new(Vec::new(), true)
+    let size = parameter.radius * 2;
+    let mut img: RgbaImage = RgbaImage::from_pixel(size, size, Rgba([0, 0, 0, 0]));
+    let linear_transformation_constant = size as f64 / 180_f64;
+    for shape in reader.iter_shapes() {
+        shapefile_draw(&mut img, &parameter, shape?, linear_transformation_constant);
+    }
+    let mut result = Vec::new();
+    let encoder = PngEncoder::new(&mut result);
+    encoder
+        .write_image(&img, size, size, ColorType::Rgba8.into())
+        .unwrap();
+    Ok(result)
 }
 
-// TODO Draw fuction
-//fn shapefile_draw() -> {}
+fn shapefile_draw(img: &mut RgbaImage, parameter: &GenerateParameters, shape: Shape, ltc: f64) {
+    //shapefile_draw_point(img, parameter.color_point, parameter.width_point, 1_f64, shapefile::record::Point::new(0_f64, 0_f64), parameter.radius as i32);
+    match shape {
+        Shape::NullShape => return,
+        Shape::Point(point) => shapefile_draw_point(
+            img,
+            parameter.color_point,
+            parameter.width_point,
+            ltc,
+            point,
+            parameter.radius as i32,
+        ),
+        Shape::PointM(point) => shapefile_draw_point(
+            img,
+            parameter.color_point,
+            parameter.width_point,
+            ltc,
+            point,
+            parameter.radius as i32,
+        ),
+        Shape::PointZ(point) => shapefile_draw_point(
+            img,
+            parameter.color_point,
+            parameter.width_point,
+            ltc,
+            point,
+            parameter.radius as i32,
+        ),
+        _ => return, // TODO
+    }
+}
+
+fn shapefile_draw_point<T: HasXY>(
+    img: &mut RgbaImage,
+    color: u32,
+    width: i32,
+    ltc: f64,
+    point: T,
+    r: i32,
+) {
+    let (x, y) = latlon_to_azimnth_isometric(point.y(), point.x());
+    let x = (x * ltc).round() as i32 + r;
+    let y = (y * ltc).round() as i32 + r;
+    draw_filled_circle_mut(img, (x, y), width, get_color_rgba(color));
+}
+
+fn get_color_rgba(color: u32) -> Rgba<u8> {
+    Rgba([
+        ((color >> 24) & 0xFF) as u8,
+        ((color >> 16) & 0xFF) as u8,
+        ((color >> 8) & 0xFF) as u8,
+        (color & 0xFF) as u8,
+    ])
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use approx::AbsDiffEq;
     use approx::assert_abs_diff_eq;
+    use std::fs::{self, File};
+    use std::io::Write;
     use std::time::Instant;
 
     struct ResultBody<T: AbsDiffEq> {
@@ -377,6 +446,23 @@ mod tests {
         );
 
         let end_ltais = start.elapsed();
+
+        let buffer: Vec<u8> = fs::read("./shapefile/ne_110m_land.shp").expect("IO Error");
+        let parameter = GenerateParameters {
+            color_point: 0x0000FFu32,
+            color_multipoint: 0x0000FFu32,
+            color_line: 0x0000FFu32,
+            color_polygon: 0x0000FFu32,
+            width_point: 3_i32,
+            width_multipoint: 3_i32,
+            width_line: 2_i32,
+            fineness: 0x00u8,
+            radius: 500u32,
+        };
+
+        let mut out_file = File::create("./out/image.png").unwrap();
+        let out_buffer = shapefile_generate(&buffer, parameter).expect("Shapefile Error");
+        out_file.write_all(&out_buffer);
 
         result.compare();
 
