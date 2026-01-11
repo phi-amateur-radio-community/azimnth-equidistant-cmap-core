@@ -1,6 +1,5 @@
-use image::codecs::png::PngEncoder;
-use std::collections::HashSet;
 use image::GenericImage;
+use image::codecs::png::PngEncoder;
 use image::{ColorType, ImageEncoder};
 use imageproc::drawing::{
     draw_filled_circle_mut, draw_line_segment_mut, draw_polygon, draw_polygon_mut,
@@ -13,6 +12,7 @@ use shapefile::record::{
     traits::HasXY,
 };
 use shapefile::{Shape, ShapeReader};
+use std::collections::HashSet;
 use std::io::Cursor;
 use std::mem::ManuallyDrop;
 
@@ -45,7 +45,7 @@ pub extern "C" fn latlon_to_azimnth_isometric_csupport(
 
 pub fn latlon_to_azimnth_isometric(lat: f64, lon_delta: f64, lat_base: f64) -> (f64, f64) {
     let square = |x: f64| x * x;
-    let square_overflow = |x: f64| square(x).clamp(-1f64,1f64);
+    let square_overflow = |x: f64| square(x).clamp(-1f64, 1f64);
     let lat_rad = lat * DEGREE_TO_RADIAN_CONSTANT;
     let lon_delta_rad = lon_delta * DEGREE_TO_RADIAN_CONSTANT;
     let (lat_sin, lat_cos) = lat_rad.sin_cos();
@@ -54,7 +54,7 @@ pub fn latlon_to_azimnth_isometric(lat: f64, lon_delta: f64, lat_base: f64) -> (
     let p_y = lat_sin;
     let p_angle = p_y.atan2(p_x);
     let p_distance = (square(p_x) + square(p_y)).sqrt();
-    let angle_delta = p_angle - lat_base*DEGREE_TO_RADIAN_CONSTANT;
+    let angle_delta = p_angle - lat_base * DEGREE_TO_RADIAN_CONSTANT;
     let (angle_delta_sin, angle_delta_cos) = angle_delta.sin_cos();
     let x = angle_delta_cos * p_distance;
     if x.abs() == 1f64 {
@@ -63,10 +63,27 @@ pub fn latlon_to_azimnth_isometric(lat: f64, lon_delta: f64, lat_base: f64) -> (
     let y = angle_delta_sin * p_distance;
     let distance = x.acos();
     let angle_cos = y / (1f64 - square(x)).sqrt();
-    let angle_sin = if lon_delta_sin > 0f64 {(1f64 - square_overflow(angle_cos)).sqrt()} else {- (1f64 - square_overflow(angle_cos)).sqrt()};
+    let angle_sin = if lon_delta_sin > 0f64 {
+        (1f64 - square_overflow(angle_cos)).sqrt()
+    } else {
+        -(1f64 - square_overflow(angle_cos)).sqrt()
+    };
 
-    println!("x:{}, y:{}, lat:{}, lon:{}, p_x:{}, p_y:{}, p_angle:{}, p_distance:{}, distance:{}, angle_sin:{}, angle_cos:{}", angle_sin * distance * 200f64 / PI, angle_cos * distance * 200f64 / PI, lat, lon_delta, p_x, p_y, p_angle, p_distance, distance, angle_sin, angle_cos);
-    
+    println!(
+        "x:{}, y:{}, lat:{}, lon:{}, p_x:{}, p_y:{}, p_angle:{}, p_distance:{}, distance:{}, angle_sin:{}, angle_cos:{}",
+        angle_sin * distance * 200f64 / PI,
+        angle_cos * distance * 200f64 / PI,
+        lat,
+        lon_delta,
+        p_x,
+        p_y,
+        p_angle,
+        p_distance,
+        distance,
+        angle_sin,
+        angle_cos
+    );
+
     (angle_sin * distance, -angle_cos * distance)
 }
 
@@ -78,29 +95,37 @@ struct Point {
 
 impl Point {
     pub fn new<T: HasXY>(p: &T) -> Self {
-        Point {
-            x: p.x(),
-            y: p.y(),
-        }
+        Point { x: p.x(), y: p.y() }
     }
 }
 
 const CHUNKS_SIZE: usize = 4096;
-fn latlon_to_azimnth_isometric_array(points: Vec<Point>, lat_base: f64, lon_base: f64) -> (Vec<f64>, Vec<f64>) {
+fn latlon_to_azimnth_isometric_array(
+    points: Vec<Point>,
+    lat_base: f64,
+    lon_base: f64,
+) -> (Vec<f64>, Vec<f64>) {
     let points_len = points.len();
-    points.par_chunks(CHUNKS_SIZE)
+    points
+        .par_chunks(CHUNKS_SIZE)
         .map(|chunk| {
-            chunk.iter().map(|point| {
-                latlon_to_azimnth_isometric(point.y, point.x - lon_base, lat_base)
-            }).unzip()
+            chunk
+                .iter()
+                .map(|point| latlon_to_azimnth_isometric(point.y, point.x - lon_base, lat_base))
+                .unzip()
         })
-        .reduce( 
-            || (Vec::with_capacity(points_len), Vec::with_capacity(points_len)),
+        .reduce(
+            || {
+                (
+                    Vec::with_capacity(points_len),
+                    Vec::with_capacity(points_len),
+                )
+            },
             |(mut xs1, mut ys1), (xs2, ys2)| {
                 xs1.extend(xs2);
                 ys1.extend(ys2);
                 (xs1, ys1)
-            }
+            },
         )
 }
 
@@ -189,7 +214,7 @@ pub fn shapefile_generate(
     Ok(result)
 }
 
-pub fn latlon_line_draw (para: GenerateParameters, spacing: usize, fineness: usize) -> Vec<u8> {
+pub fn latlon_line_draw(para: GenerateParameters, spacing: usize, fineness: usize) -> Vec<u8> {
     let size = (para.radius * 2) + 1;
     let mut img: RgbaImage = RgbaImage::from_pixel(size, size, Rgba([0, 0, 0, 0]));
     let linear_transformation_constant = para.radius as f64 / PI;
@@ -359,7 +384,7 @@ fn shapefile_draw(
             rings,
             para.radius as i32,
         ),
-        _ => return ,
+        _ => return,
     }
 }
 
@@ -390,7 +415,11 @@ fn shapefile_draw_multipoint<T: HasXY>(
     r: i32,
 ) {
     let color = get_color_rgba(color_data);
-    let (xs, ys) = latlon_to_azimnth_isometric_array(points.points().into_iter().map(Point::new).collect(), base_lat, base_lon);
+    let (xs, ys) = latlon_to_azimnth_isometric_array(
+        points.points().into_iter().map(Point::new).collect(),
+        base_lat,
+        base_lon,
+    );
     for (x_origin, y_origin) in xs.iter().copied().zip(ys.iter().copied()) {
         let x = (x_origin * ltc).round() as i32 + r;
         let y = (y_origin * ltc).round() as i32 + r;
@@ -410,7 +439,11 @@ fn shapefile_draw_polyline<T: HasXY>(
 ) {
     let color = get_color_rgba(color_data);
     for part in lines.parts() {
-        let (xs, ys) = latlon_to_azimnth_isometric_array(part.into_iter().map(Point::new).collect(), base_lat, base_lon);
+        let (xs, ys) = latlon_to_azimnth_isometric_array(
+            part.into_iter().map(Point::new).collect(),
+            base_lat,
+            base_lon,
+        );
         let mut positions = xs.iter().copied().zip(ys.iter().copied());
         let (mut x_cache, mut y_cache) = match positions.next() {
             Some((x, y)) => ((x * ltc).round() as f32 + r, (y * ltc).round() as f32 + r),
@@ -441,7 +474,11 @@ fn shapefile_draw_polygon<T: HasXY>(
     let mut img_out: GrayImage = GrayImage::new(size, size);
     let mut img_in: GrayImage = GrayImage::new(size, size);
     for ring in polygon.rings() {
-        let (xs, ys) = latlon_to_azimnth_isometric_array(ring.points().into_iter().map(Point::new).collect(), base_lat, base_lon);
+        let (xs, ys) = latlon_to_azimnth_isometric_array(
+            ring.points().into_iter().map(Point::new).collect(),
+            base_lat,
+            base_lon,
+        );
         let is_cw = is_clockwise(&xs, &ys);
         let mut point_set = HashSet::<(i32, i32)>::new();
         let points: Vec<imageproc::point::Point<i32>> = xs
@@ -471,8 +508,14 @@ fn shapefile_draw_polygon<T: HasXY>(
         let luma = image::Luma([255u8]);
         match (ring, is_cw) {
             (Outer(_), false) => draw_polygon_mut(&mut img_out, &points, luma),
-            (Outer(_), true) => draw_merge(&draw_polygon(img_all, &points, image::Luma([0u8])), &mut img_out),
-            (Inner(_), false) => draw_merge(&draw_polygon(img_all, &points, image::Luma([0u8])), &mut img_in),
+            (Outer(_), true) => draw_merge(
+                &draw_polygon(img_all, &points, image::Luma([0u8])),
+                &mut img_out,
+            ),
+            (Inner(_), false) => draw_merge(
+                &draw_polygon(img_all, &points, image::Luma([0u8])),
+                &mut img_in,
+            ),
             (Inner(_), true) => draw_polygon_mut(&mut img_in, &points, luma),
         }
         draw_with_mask_gray(&img_out, &img_in, img, color);
@@ -545,7 +588,7 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use std::io::Write;
-    
+
     #[test]
     fn test_main() {
         let buffer: Vec<u8> = fs::read("./shapefile/ne_110m_land.shp").expect("IO Error");
