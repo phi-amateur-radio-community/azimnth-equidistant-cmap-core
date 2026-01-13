@@ -692,7 +692,7 @@ mod tests {
             width_line: 2_i32,
             fineness: 0x00u8,
             radius: 200u32,
-            base_lat: 0090f64,
+            base_lat: 0000f64,
             base_lon: 0000f64,
         };
 
